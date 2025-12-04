@@ -1,150 +1,69 @@
-# app.py (FULL, FINAL CODE)
+from services.vector_db_simulator import VectorDB_Simulator
+from services.cnn_model_service import CNNModel_Service
 
-import streamlit as st
-from pydantic import BaseModel
-from typing import List, Dict, Any
+# ---------------------------------------
+# INITIALIZATION (your models + embeddings)
+# ---------------------------------------
 
-# CRITICAL: These helper files MUST be present in the same directory
-from data_prep import load_cleaned_data, get_unique_products
-from vector_db import VectorDB_Simulator
-from cnn_model import CNNModel_Service 
+def load_vector_db():
+    products = ["Product A", "Product B", "Product C"]
+    embeddings = [
+        [0.4, 0.2, 0.8],
+        [0.1, 0.9, 0.3],
+        [0.7, 0.1, 0.5]
+    ]
+    return VectorDB_Simulator(products, embeddings)
 
-import tensorflow as tf 
-import numpy as np 
+def load_cnn_model():
+    class DummyModel:
+        def __call__(self, x):
+            import torch
+            return torch.tensor([[0.1, 0.7, 0.2]])
+    labels = ["Electronics", "Clothing", "Shoes"]
+    return CNNModel_Service(DummyModel(), labels)
 
-# --------------------------------------------------------------------
-# 1. INITIALIZATION
-# --------------------------------------------------------------------
+vector_db = load_vector_db()
+cnn_model = load_cnn_model()
 
-app = FastAPI(
-    title="E-commerce Recommendation and Detection Service",
-    description="A service for product recommendation via text, OCR, and image detection."
-)
+# ---------------------------------------
+# TEXT QUERY INTERFACE
+# ---------------------------------------
 
-vector_db_service: VectorDB_Simulator = None
-cnn_model_service: CNNModel_Service = None 
+def text_query(query):
+    print(f"Processing text query: {query}")
 
-# --------------------------------------------------------------------
-# 2. MODELS (Pydantic Schemas)
-# --------------------------------------------------------------------
-
-class ProductMatch(BaseModel):
-    StockCode: str
-    Description: str
-    SimilarityScore: float = None
-
-class RecommendationResponse(BaseModel):
-    natural_language_response: str
-    product_matches_array: List[ProductMatch]
-
-class OCRDetectionResponse(BaseModel):
-    extracted_text: str
-    recommendation: RecommendationResponse
-
-class ImageDetectionResponse(BaseModel):
-    cnn_model_class: str 
-    product_description: str
-    recommendation: RecommendationResponse
-
-# --------------------------------------------------------------------
-# 3. HELPER FUNCTION
-# --------------------------------------------------------------------
-
-def get_product_recommendations(query: str) -> RecommendationResponse:
-    """Queries the VectorDB and formats the results."""
+    query_embedding = [0.5, 0.3, 0.6]  # dummy example
+    results = vector_db.search(query_embedding)
     
-    if not vector_db_service:
-        raise HTTPException(status_code=500, detail="VectorDB service is not initialized.")
-        
-    top_matches = vector_db_service.query(query, top_k=5)
-    
-    if not top_matches:
-        nl_response = f"I could not find a match for '{query}'."
-    else:
-        best_match_desc = top_matches[0]['Description']
-        nl_response = (
-            f"The closest match I found for '{query}' is: '{best_match_desc}'. "
-            "Here are the top 5 most similar products based on the description."
-        )
+    print("Top recommendations:")
+    for r in results:
+        print(" -", r)
 
-    return RecommendationResponse(
-        natural_language_response=nl_response,
-        product_matches_array=[
-            ProductMatch(**match) for match in top_matches
-        ]
-    )
+# ---------------------------------------
+# IMAGE CLASSIFICATION INTERFACE
+# ---------------------------------------
 
-# --------------------------------------------------------------------
-# 4. STARTUP EVENT
-# --------------------------------------------------------------------
+def classify_image(path):
+    print(f"Classifying image: {path}")
+    result = cnn_model.predict(path)
+    print("Detected Category:", result)
 
-@app.on_event("startup")
-def startup_event():
-    """Initializes the services on application startup."""
-    global vector_db_service, cnn_model_service
-    
-    try:
-        # NOTE: This uses the corrected filename 'cleaned_data.csv'
-        df = load_cleaned_data() 
-        unique_products = get_unique_products(df)
-    except Exception as e:
-        raise RuntimeError(f"Failed to load data for services (Data Prep Error): {e}")
+# ---------------------------------------
+# OCR → RECOMMENDATION (Optional)
+# ---------------------------------------
 
-    if not unique_products.empty:
-        product_descriptions = unique_products['Description'].tolist()
-        
-        vector_db_service = VectorDB_Simulator(unique_products)
-        
-        # NOTE: This loads your trained Keras model
-        cnn_model_service = CNNModel_Service(
-            model_path='cnn_product_detection_model.keras', 
-            product_descriptions=product_descriptions
-        )
-    else:
-        raise RuntimeError("Failed to load unique product data, cannot initialize services.")
+def ocr_and_recommend(path):
+    print(f"OCR processing image: {path}")
+    extracted_text = "dummy text from OCR"  # plug in real OCR
+    text_query(extracted_text)
 
-# --------------------------------------------------------------------
-# 5. ENDPOINTS
-# --------------------------------------------------------------------
+# ---------------------------------------
+# RUN DEMOS
+# ---------------------------------------
 
-@app.get("/api/recommend/text", response_model=RecommendationResponse, tags=["Module 1"])
-def recommend_by_text(query: str):
-    return get_product_recommendations(query)
+if __name__ == "__main__":
+    text_query("Show me gaming laptops")
 
-@app.post("/api/recommend/ocr", response_model=OCRDetectionResponse, tags=["Module 2"])
-async def recommend_by_ocr(file: UploadFile = File(...)):
-    simulated_extracted_text = "KNITTED UNION FLAG HOT WATER BOTTLE and a T-LIGHT HOLDER"
-    recommendation_response = get_product_recommendations(simulated_extracted_text)
-    
-    return OCRDetectionResponse(
-        extracted_text=simulated_extracted_text,
-        recommendation=recommendation_response
-    )
+    classify_image("example.jpg")
 
-@app.post("/api/detect/image", response_model=ImageDetectionResponse, tags=["Module 3"])
-async def detect_product_image(file: UploadFile = File(...)):
-    
-    if not cnn_model_service or not vector_db_service:
-        raise HTTPException(status_code=500, detail="Core services are not initialized.")
-
-    image_bytes = await file.read()
-    predicted_class_name = cnn_model_service.detect_product(image_bytes)
-    
-    if predicted_class_name in ["PROCESSING_ERROR", "UNKNOWN_PRODUCT_INDEX"]:
-        recommendation = RecommendationResponse(
-            natural_language_response="Product identification failed due to an error or poor prediction.",
-            product_matches_array=[]
-        )
-        return ImageDetectionResponse(
-            cnn_model_class=predicted_class_name,
-            product_description="Could not reliably identify product from image.",
-            recommendation=recommendation
-        )
-        
-    recommendation_response = get_product_recommendations(predicted_class_name)
-
-    return ImageDetectionResponse(
-        cnn_model_class=predicted_class_name,
-        product_description=predicted_class_name,
-        recommendation=recommendation_response
-    )
+    ocr_and_recommend("handwritten.jpg")
