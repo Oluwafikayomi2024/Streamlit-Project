@@ -1,1 +1,4 @@
-(All the listed packages, one per line)
+streamlit
+pandas
+numpy
+tensorflow
