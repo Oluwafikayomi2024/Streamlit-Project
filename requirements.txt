@@ -2,4 +2,10 @@ streamlit
 pandas
 numpy
 tensorflow
+pillow
+requests
 pydantic
+scikit-learn
+gitpython
+altair
+pyarrow
